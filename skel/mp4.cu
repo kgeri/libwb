@@ -1,24 +1,50 @@
-// MP 4 Reduction
+// MP Reduction
 // Given a list (lst) of length n
 // Output its sum = lst[0] + lst[1] + ... + lst[n-1];
 
 #include    <wb.h>
 
-#define BLOCK_SIZE 512 //@@ You can change this
+#define BLOCK_SIZE 512
 
-#define wbCheck(stmt) do {                                 \
-        cudaError_t err = stmt;                            \
-        if (err != cudaSuccess) {                          \
-            wbLog(ERROR, "Failed to run stmt ", #stmt);    \
-            return -1;                                     \
-        }                                                  \
+#define wbCheck(stmt) do {                                                    \
+        cudaError_t err = stmt;                                               \
+        if (err != cudaSuccess) {                                             \
+            wbLog(ERROR, "Failed to run stmt ", #stmt);                       \
+            wbLog(ERROR, "Got CUDA error ...  ", cudaGetErrorString(err));    \
+            return -1;                                                        \
+        }                                                                     \
     } while(0)
 
 __global__ void total(float * input, float * output, int len) {
-    //@@ Load a segment of the input vector into shared memory
-    //@@ Traverse the reduction tree
-    //@@ Write the computed sum of the block to the output vector at the 
-    //@@ correct index
+    int tx = threadIdx.x;
+    int bx = blockIdx.x;
+    int inx = bx * blockDim.x + tx;
+
+    __shared__ float DS[BLOCK_SIZE * 2];
+
+    // Loading phase
+    if(inx < len) DS[tx] = input[inx];
+    else DS[tx] = 0.0;
+
+    // Reduction phase
+    for(int stride = 1; stride <= BLOCK_SIZE; stride *= 2) {
+        int idx = (tx + 1) * stride * 2 - 1;
+        __syncthreads();
+        if(idx < 2 * BLOCK_SIZE) DS[idx] += DS[idx - stride];
+    }
+
+    // Reverse phase
+    for(int stride = BLOCK_SIZE/2; stride > 0; stride /= 2) {
+	int idx = (tx + 1) * stride * 2 - 1;
+        __syncthreads();
+	if(idx + stride < 2 * BLOCK_SIZE) {
+            DS[idx + stride] += DS[idx];
+        }
+    }
+
+    // Using the first thread of the block to save the result
+    __syncthreads();
+    if(inx < len && tx == 0) output[bx] = DS[BLOCK_SIZE * 2 - 1];
 }
 
 int main(int argc, char ** argv) {
@@ -48,25 +74,26 @@ int main(int argc, char ** argv) {
     wbLog(TRACE, "The number of output elements in the input is ", numOutputElements);
 
     wbTime_start(GPU, "Allocating GPU memory.");
-    //@@ Allocate GPU memory here
-
+    cudaMalloc((void**) &deviceInput, numInputElements * sizeof(float));
+	cudaMalloc((void**) &deviceOutput, numOutputElements * sizeof(float));
     wbTime_stop(GPU, "Allocating GPU memory.");
 
     wbTime_start(GPU, "Copying input memory to the GPU.");
-    //@@ Copy memory to the GPU here
-
+    cudaMemcpy(deviceInput, hostInput, numInputElements * sizeof(float), cudaMemcpyHostToDevice);
     wbTime_stop(GPU, "Copying input memory to the GPU.");
-    //@@ Initialize the grid and block dimensions here
-
+    
+	dim3 DimGrid(numOutputElements, 1, 1);
+	dim3 DimBlock(BLOCK_SIZE * 2, 1, 1);
+		
     wbTime_start(Compute, "Performing CUDA computation");
-    //@@ Launch the GPU Kernel here
-
+    
+	total<<<DimGrid, DimBlock>>>(deviceInput, deviceOutput, numInputElements);
     cudaDeviceSynchronize();
+	wbCheck(cudaGetLastError());
     wbTime_stop(Compute, "Performing CUDA computation");
 
     wbTime_start(Copy, "Copying output memory to the CPU");
-    //@@ Copy the GPU memory back to the CPU here
-
+    cudaMemcpy(hostOutput, deviceOutput, numOutputElements * sizeof(float), cudaMemcpyDeviceToHost);
     wbTime_stop(Copy, "Copying output memory to the CPU");
 
     /********************************************************************
@@ -80,8 +107,8 @@ int main(int argc, char ** argv) {
     }
 
     wbTime_start(GPU, "Freeing GPU Memory");
-    //@@ Free the GPU memory here
-
+	cudaFree(deviceInput);
+	cudaFree(deviceOutput);
     wbTime_stop(GPU, "Freeing GPU Memory");
 
     wbSolution(args, hostOutput, 1);
@@ -91,4 +118,5 @@ int main(int argc, char ** argv) {
 
     return 0;
 }
+
 

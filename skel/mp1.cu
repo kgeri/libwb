@@ -2,7 +2,8 @@
 #include	<wb.h>
 
 __global__ void vecAdd(float * in1, float * in2, float * out, int len) {
-    //@@ Insert code to implement vector addition here
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+	if(i < len) out[i] = in1[i] + in2[i];
 }
 
 int main(int argc, char ** argv) {
@@ -26,36 +27,33 @@ int main(int argc, char ** argv) {
     wbLog(TRACE, "The input length is ", inputLength);
 
 	wbTime_start(GPU, "Allocating GPU memory.");
-    //@@ Allocate GPU memory here
-
-
+    cudaMalloc((void**) &deviceInput1, inputLength * sizeof(float));
+	cudaMalloc((void**) &deviceInput2, inputLength * sizeof(float));
+	cudaMalloc((void**) &deviceOutput, inputLength * sizeof(float));
     wbTime_stop(GPU, "Allocating GPU memory.");
 
     wbTime_start(GPU, "Copying input memory to the GPU.");
-    //@@ Copy memory to the GPU here
-
-
+    cudaMemcpy(deviceInput1, hostInput1, inputLength * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(deviceInput2, hostInput2, inputLength * sizeof(float), cudaMemcpyHostToDevice);
     wbTime_stop(GPU, "Copying input memory to the GPU.");
     
-    //@@ Initialize the grid and block dimensions here
-
-
+    dim3 DimGrid((inputLength-1)/65535+1, 1, 1);
+	dim3 DimBlock(1024, 1, 1);
     
     wbTime_start(Compute, "Performing CUDA computation");
-    //@@ Launch the GPU Kernel here
+    vecAdd<<<DimGrid, DimBlock>>>(deviceInput1, deviceInput2, deviceOutput, inputLength);
 
     cudaThreadSynchronize();
     wbTime_stop(Compute, "Performing CUDA computation");
     
     wbTime_start(Copy, "Copying output memory to the CPU");
-    //@@ Copy the GPU memory back to the CPU here
-
+    cudaMemcpy(hostOutput, deviceOutput, inputLength * sizeof(float), cudaMemcpyDeviceToHost);
     wbTime_stop(Copy, "Copying output memory to the CPU");
 
     wbTime_start(GPU, "Freeing GPU Memory");
-    //@@ Free the GPU memory here
-
-
+    cudaFree(deviceInput1);
+	cudaFree(deviceInput2);
+	cudaFree(deviceOutput);
     wbTime_stop(GPU, "Freeing GPU Memory");
 
     wbSolution(args, hostOutput, inputLength);
@@ -66,4 +64,5 @@ int main(int argc, char ** argv) {
 
     return 0;
 }
+
 
